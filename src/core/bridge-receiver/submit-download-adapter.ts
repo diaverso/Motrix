@@ -50,6 +50,7 @@ export interface AdaptedMagnet {
 }
 
 export interface AdaptedHls {
+  receipt?: CreateRequestReceipt
   kind: 'hls'
   taskId: string
   saveDir: string
@@ -57,13 +58,17 @@ export interface AdaptedHls {
   manifestUrl: string
   sanitizedHeaders: Record<string, string>
   container: 'mp4' | 'mkv' | 'ts'
-  sourceMeta: BridgeSourceMeta
+  /** BridgeSourceMeta for extension submits; null for an HLS manifest a
+   *  site-resolver plugin produced on the desktop Add-Task path. */
+  sourceMeta: SourceMeta
   durationSec?: number
 }
 
-export interface AdaptedDash extends Omit<AdaptedHls, 'kind' | 'container'> {
+export interface AdaptedDash
+  extends Omit<AdaptedHls, 'kind' | 'container' | 'sourceMeta' | 'receipt'> {
   kind: 'dash'
   container: 'mp4' | 'mkv'
+  sourceMeta: BridgeSourceMeta
 }
 
 export interface AdaptedMux {
@@ -81,6 +86,29 @@ export interface AdaptedMux {
   sourceMeta: SourceMeta
   durationSec?: number
 }
+
+/** A site-resolver plugin's split video + audio pair. `kind` is optional
+ *  because the mux shape predates the HLS variant. */
+export interface ResolvedMux {
+  kind?: 'mux'
+  videoUrl: string
+  audioUrl: string
+  container: 'mp4' | 'mkv'
+  headers?: Record<string, string>
+  title?: string
+}
+
+/** A site-resolver plugin's HLS manifest, routed to the HLS pipeline. */
+export interface ResolvedHls {
+  kind: 'hls'
+  manifestUrl: string
+  container: 'mp4' | 'mkv' | 'ts'
+  headers?: Record<string, string>
+  title?: string
+}
+
+/** What the `${id}.resolve` seam may hand back to the host. */
+export type ResolvedMedia = ResolvedMux | ResolvedHls
 
 export interface AdaptInput {
   /** Authenticated routing key supplied by the transport, never the request. */

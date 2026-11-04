@@ -3130,6 +3130,62 @@ describe('handleCreateTask reserved-GID ownership', () => {
 })
 
 describe('handleCreateTask mux pre-resolve seam', () => {
+  it('routes a plugin HLS manifest to dispatchHls with its headers and title', async () => {
+    const resolveToMux = vi.fn().mockResolvedValue({
+      kind: 'hls',
+      manifestUrl: 'https://cdn.example/hls/master.m3u8?t=1',
+      container: 'mp4',
+      headers: { Referer: 'https://site.example/', Connection: 'keep-alive' },
+      title: 'Show S01E06',
+    })
+    const dispatchHls = vi.fn().mockResolvedValue({ taskId: 'hls-task-id' })
+    const dispatchMux = vi.fn()
+    const deps = makeDeps()
+    const result = await handleCreateTask(
+      {
+        type: 'http',
+        uris: ['https://site.example/e/abc'],
+        saveDir: '/d',
+        headers: [],
+      },
+      { ...deps, resolveToMux, dispatchMux, dispatchHls }
+    )
+    expect(result.taskId).toBe('hls-task-id')
+    expect(deps.addUri).not.toHaveBeenCalled()
+    expect(dispatchMux).not.toHaveBeenCalled()
+    const adapted = dispatchHls.mock.calls[0][0]
+    expect(adapted).toMatchObject({
+      kind: 'hls',
+      manifestUrl: 'https://cdn.example/hls/master.m3u8?t=1',
+      container: 'mp4',
+      finalName: 'Show S01E06.mp4',
+      sanitizedHeaders: { Referer: 'https://site.example/' },
+      sourceMeta: null,
+    })
+    expect(adapted.sanitizedHeaders).not.toHaveProperty('Connection')
+  })
+
+  it('falls back to the HTTP path for an HLS result when no dispatchHls is wired', async () => {
+    const resolveToMux = vi.fn().mockResolvedValue({
+      kind: 'hls',
+      manifestUrl: 'https://cdn.example/master.m3u8',
+      container: 'mp4',
+    })
+    const dispatchMux = vi.fn()
+    const deps = makeDeps()
+    await handleCreateTask(
+      {
+        type: 'http',
+        uris: ['https://site.example/e/abc'],
+        saveDir: '/d',
+        headers: [],
+      },
+      { ...deps, resolveToMux, dispatchMux }
+    )
+    expect(dispatchMux).not.toHaveBeenCalled()
+    expect(deps.addUri).toHaveBeenCalledOnce()
+  })
+
   it('routes http to dispatchMux (not engine) when resolveToMux returns a mux pair', async () => {
     const muxPair = {
       videoUrl: 'https://video.example/v.mp4',

@@ -11,6 +11,7 @@ import { fetchManifest } from '@core/media/manifest-fetcher'
 import { assembleSegments } from '@core/media/segment-assembler'
 import { SegmentDecryptor } from '@core/media/segment-decryptor'
 import { MediaTaskCoordinator } from '@core/task/media-task-coordinator'
+import { admitHttpSource } from '@core/task/source-admission'
 import type { TaskManager } from '@core/task/task-manager'
 import {
   type DownloadSubmitParams,
@@ -35,8 +36,10 @@ import {
 } from './progress-mapping'
 import { ProgressPublisher } from './progress-publisher'
 import {
+  type AdaptedHls,
   type AdaptedMux,
   type AdapterDeps,
+  type ResolvedMedia,
   SubmitDownloadAdapter,
   sanitizeFilename,
 } from './submit-download-adapter'
@@ -146,13 +149,7 @@ export interface BridgeReceiverDeps {
   resolveToMux?: (
     url: string,
     cookieHeader?: string
-  ) => Promise<{
-    videoUrl: string
-    audioUrl: string
-    container: 'mp4' | 'mkv'
-    headers?: Record<string, string>
-    title?: string
-  } | null>
+  ) => Promise<ResolvedMedia | null>
   /**
    * Optional startup gate awaited before any submit reaches a pipeline.
    * The bootstrap resolves it once engine start + SessionManager.restore()
@@ -284,6 +281,12 @@ export class BridgeReceiver {
     return this.mux
   }
 
+  /** Read-only access to the shared HlsDashPipeline, for the desktop
+   *  Add-Task path's plugin-resolved HLS manifests (same coordinator). */
+  get hlsDashPipeline(): HlsDashPipeline | undefined {
+    return this.hlsDash
+  }
+
   /**
    * Active aria2 segment gids for a coordinator-managed media task (kind
    * Mux/Hls). These ARE real aria2 gids — unlike the task's empty engineTaskId
@@ -376,6 +379,37 @@ export class BridgeReceiver {
       const serialized = serializeCookieHeader(rawCookies)
       const cookieHeader = serialized || undefined
       const m = await this.deps.resolveToMux(adapted.primaryUrl, cookieHeader)
+      if (m?.kind === 'hls') {
+        if (!this.hlsDash) {
+          throw new BridgeReceiverError(
+            'unsupported-kind',
+            'ffmpeg unavailable — hls/dash pipeline not active'
+          )
+        }
+        const titleBase = m.title ? sanitizeFilename(m.title).trim() : ''
+        const finalName = titleBase
+          ? await this.deps.pickName(
+              adapted.saveDir,
+              ensureMediaExtension(titleBase, m.container)
+            )
+          : adapted.finalName
+        const hlsAdapted: AdaptedHls = {
+          kind: 'hls',
+          taskId: adapted.taskId,
+          saveDir: adapted.saveDir,
+          finalName,
+          manifestUrl: admitHttpSource(m.manifestUrl),
+          sanitizedHeaders: m.headers
+            ? stripHopByHopHeaders(m.headers)
+            : adapted.sanitizedHeaders,
+          container: m.container,
+          sourceMeta: adapted.sourceMeta,
+          ...(adapted.sourceMeta.durationSec != null
+            ? { durationSec: adapted.sourceMeta.durationSec }
+            : {}),
+        }
+        return this.hlsDash.dispatch(hlsAdapted)
+      }
       if (m) {
         if (!this.mux) {
           throw new BridgeReceiverError(

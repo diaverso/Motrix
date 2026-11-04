@@ -142,6 +142,7 @@ export class HlsDashPipeline {
           ...(adapted.durationSec !== undefined
             ? { durationSec: adapted.durationSec }
             : {}),
+          ...(adapted.receipt ? { receipt: adapted.receipt } : {}),
         }
         return coordinator.submit(job)
       }
@@ -162,6 +163,7 @@ export class HlsDashPipeline {
         ...(adapted.durationSec !== undefined
           ? { durationSec: adapted.durationSec }
           : {}),
+        ...(adapted.receipt ? { receipt: adapted.receipt } : {}),
       }
       return coordinator.submit(job)
     } catch (e) {

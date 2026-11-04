@@ -1,7 +1,10 @@
 import { realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { BridgeReceiverError } from '@core/bridge-receiver/errors'
-import type { AdaptedMux } from '@core/bridge-receiver/submit-download-adapter'
+import type {
+  AdaptedHls,
+  AdaptedMux,
+} from '@core/bridge-receiver/submit-download-adapter'
 import type { DnsFallbackConsumer } from '@core/engine/aria2/dns-fallback'
 import { dnsModeToAsyncDns } from '@core/engine/aria2/dns-fallback'
 import type { EngineAdapter } from '@core/engine/engine-adapter'
@@ -408,6 +411,30 @@ export function buildCommandHandlers(ctx: CommandContext): CommandHandlerMap {
     // Bilibili HD comes via the extension submit path, which carries cookies.
     resolveToMux: (url: string) =>
       bridgeManager.current?.resolveToMux(url) ?? Promise.resolve(null),
+    // Plugin-resolved HLS manifests reuse the receiver's HlsDashPipeline.
+    dispatchHls: async (adapted: AdaptedHls) => {
+      const hls = bridgeManager.current?.hlsDashPipeline
+      if (!hls) {
+        throw new AppError(
+          ErrorCode.EngineFeatureUnavailable,
+          i18n.t('settings.integration.media.pipelineUnavailable')
+        )
+      }
+      try {
+        return await hls.dispatch(adapted)
+      } catch (error) {
+        if (
+          error instanceof BridgeReceiverError &&
+          error.code === 'unsupported-kind'
+        ) {
+          throw new AppError(
+            ErrorCode.EngineFeatureUnavailable,
+            i18n.t('settings.integration.media.ffmpegRequired')
+          )
+        }
+        throw error
+      }
+    },
     // Share the receiver's live FFmpeg check with desktop submissions.
     dispatchMux: async (adapted: AdaptedMux) => {
       const mux = bridgeManager.current?.muxPipeline

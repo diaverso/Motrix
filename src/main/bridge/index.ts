@@ -42,6 +42,10 @@ import {
 import type { BridgeReceiverDeps } from '@core/bridge-receiver/bridge-receiver'
 import { BridgeReceiver } from '@core/bridge-receiver/bridge-receiver'
 import { BridgeStreamSource } from '@core/bridge-receiver/bridge-stream-source'
+import type {
+  ResolvedHls,
+  ResolvedMedia,
+} from '@core/bridge-receiver/submit-download-adapter'
 import { getLogger } from '@core/logger'
 import { urlMatchesHostPermissions } from '@core/plugin/hooks/eligibility'
 import type { PluginHost } from '@core/plugin/host/plugin-host'
@@ -122,16 +126,7 @@ function contributesResolveCommand(manifest: PluginManifest): boolean {
 export function makeResolveToMux(
   pluginRegistry: PluginRegistry,
   pluginHost: PluginHost
-): (
-  url: string,
-  cookieHeader?: string
-) => Promise<{
-  videoUrl: string
-  audioUrl: string
-  container: 'mp4' | 'mkv'
-  headers?: Record<string, string>
-  title?: string
-} | null> {
+): (url: string, cookieHeader?: string) => Promise<ResolvedMedia | null> {
   return async (url: string, cookieHeader?: string) => {
     const candidates = pluginRegistry
       .entries()
@@ -168,6 +163,8 @@ export function makeResolveToMux(
           `${id}.resolve`,
           invokeArgs
         )
+        const hls = toResolvedHls(res)
+        if (hls) return hls
         if (
           res !== null &&
           typeof res === 'object' &&
@@ -193,6 +190,39 @@ export function makeResolveToMux(
       }
     }
     return null
+  }
+}
+
+const HLS_CONTAINERS = new Set(['mp4', 'mkv', 'ts'])
+
+/**
+ * Narrow a plugin's `{ kind: 'hls', manifestUrl, headers?, container?, title? }`
+ * resolve result. Anything malformed returns null so the caller falls through
+ * to the next candidate, exactly like an unrecognised mux result.
+ */
+function toResolvedHls(res: unknown): ResolvedHls | null {
+  if (res === null || typeof res !== 'object') return null
+  const r = res as Record<string, unknown>
+  if (r.kind !== 'hls' || typeof r.manifestUrl !== 'string') return null
+  const container =
+    typeof r.container === 'string' && HLS_CONTAINERS.has(r.container)
+      ? (r.container as ResolvedHls['container'])
+      : 'mp4'
+  let headers: Record<string, string> | undefined
+  if (r.headers !== undefined) {
+    if (r.headers === null || typeof r.headers !== 'object') return null
+    headers = {}
+    for (const [k, v] of Object.entries(r.headers)) {
+      if (typeof v !== 'string') return null
+      headers[k] = v
+    }
+  }
+  return {
+    kind: 'hls',
+    manifestUrl: r.manifestUrl,
+    container,
+    ...(headers ? { headers } : {}),
+    ...(typeof r.title === 'string' && r.title ? { title: r.title } : {}),
   }
 }
 
@@ -250,6 +280,11 @@ export interface BridgeRuntime {
   muxPipeline:
     | import('@core/bridge-receiver/pipelines/mux-pipeline').MuxPipeline
     | undefined
+  /** The shared HlsDashPipeline, for plugin-resolved HLS on the desktop
+   *  Add-Task path. Same coordinator as muxPipeline. */
+  hlsDashPipeline:
+    | import('@core/bridge-receiver/pipelines/hls-dash-pipeline').HlsDashPipeline
+    | undefined
   /**
    * Tear down a coordinator-managed media task's in-flight run (segment
    * downloaders + ffmpeg + temp). Used by the remove path so removing a media
@@ -274,13 +309,7 @@ export interface BridgeRuntime {
   resolveToMux: (
     url: string,
     cookieHeader?: string
-  ) => Promise<{
-    videoUrl: string
-    audioUrl: string
-    container: 'mp4' | 'mkv'
-    headers?: Record<string, string>
-    title?: string
-  } | null>
+  ) => Promise<ResolvedMedia | null>
 }
 
 interface NativeMessagingInstallation {
@@ -1098,6 +1127,7 @@ export async function bootstrapBridge(args: {
       degraded,
       shutdown: () => ownership.dispose(),
       muxPipeline: receiver.muxPipeline,
+      hlsDashPipeline: receiver.hlsDashPipeline,
       getMediaSegmentGids: (taskId: string) =>
         receiver.getMediaSegmentGids(taskId),
       cancelMedia: (taskId: string) => receiver.cancelMedia(taskId),

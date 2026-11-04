@@ -617,6 +617,41 @@ describe('BridgeReceiver', () => {
       expect(muxArg.finalName).toBe('Human Title.mp4')
     })
 
+    it('a plugin HLS manifest routes direct submit to HlsDashPipeline', async () => {
+      const resolveToMux = vi.fn(async () => ({
+        kind: 'hls' as const,
+        manifestUrl: 'https://cdn.example/hls/master.m3u8',
+        container: 'mp4' as const,
+        headers: { Referer: 'https://site.example/' },
+        title: 'Show S01E06',
+      }))
+      const deps = fakeDeps({
+        ffmpegBinaryPath: '/usr/bin/ffmpeg',
+        fetchManifest: vi.fn(async () => ''),
+        taskManager: new TaskManager(),
+        segmentAria2: fakeSegmentAria2,
+        resolveToMux,
+      })
+      const r = new BridgeReceiver(deps as never)
+      const hls = r.hlsDashPipeline
+      expect(hls).toBeDefined()
+      const hlsSpy = vi
+        .spyOn(hls as NonNullable<typeof hls>, 'dispatch')
+        .mockResolvedValue({ taskId: 'hls-1' })
+
+      const result = await r.handle(directParams, extCtx)
+
+      expect(result).toEqual({ taskId: 'hls-1' })
+      expect(deps.createTask).not.toHaveBeenCalled()
+      expect(hlsSpy.mock.calls[0]?.[0]).toMatchObject({
+        kind: 'hls',
+        manifestUrl: 'https://cdn.example/hls/master.m3u8',
+        container: 'mp4',
+        finalName: 'Show S01E06.mp4',
+        sanitizedHeaders: { Referer: 'https://site.example/' },
+      })
+    })
+
     it('resolveToMux returning null falls through to direct dispatch (no regression)', async () => {
       const resolveToMux = vi.fn(async (_url: string) => null)
 

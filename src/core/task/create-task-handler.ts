@@ -2,7 +2,9 @@ import path from 'node:path'
 import { stripHopByHopHeaders } from '@core/bridge-receiver/header-replay'
 import { ensureMediaExtension } from '@core/bridge-receiver/pipelines/media-final-name'
 import {
+  type AdaptedHls,
   type AdaptedMux,
+  type ResolvedMedia,
   sanitizeFilename,
 } from '@core/bridge-receiver/submit-download-adapter'
 import type {
@@ -207,16 +209,13 @@ export interface CreateTaskDeps {
   resolveToMux?: (
     url: string,
     cookieHeader?: string
-  ) => Promise<{
-    videoUrl: string
-    audioUrl: string
-    container: 'mp4' | 'mkv'
-    headers?: Record<string, string>
-    title?: string
-  } | null>
+  ) => Promise<ResolvedMedia | null>
   /** Dispatch an AdaptedMux to the shared MuxPipeline. Must be paired with
    *  resolveToMux — both present or both absent. */
   dispatchMux?: (adapted: AdaptedMux) => Promise<{ taskId: string }>
+  /** Dispatch a plugin-resolved HLS manifest to the shared HlsDashPipeline.
+   *  Absent → an HLS resolve result falls through to the HTTP path. */
+  dispatchHls?: (adapted: AdaptedHls) => Promise<{ taskId: string }>
   /** Re-adds a terminal BT task against its final layout with integrity
    * checking. Shell command handlers inject the existing reAddTask action. */
   reuseExistingBt?: (taskId: string) => Promise<void>
@@ -778,7 +777,47 @@ async function handleCreateTaskUnderAdmission(
       const uri = params.uris[0]
       if (uri) {
         const muxResult = await deps.resolveToMux(uri)
-        if (muxResult) {
+        if (muxResult?.kind === 'hls' && deps.dispatchHls) {
+          const sanitizedHeaders = muxResult.headers
+            ? stripHopByHopHeaders(muxResult.headers)
+            : {}
+          log.info(
+            {
+              taskId,
+              manifestHost: safeHost(muxResult.manifestUrl),
+              container: muxResult.container,
+              hasReferer: 'Referer' in sanitizedHeaders,
+            },
+            'hls resolve result'
+          )
+          const titleBase = muxResult.title
+            ? sanitizeFilename(muxResult.title).trim()
+            : ''
+          const hlsFinalName = titleBase
+            ? await deps.finalNamePicker.pick(
+                effectiveSaveDir,
+                ensureMediaExtension(titleBase, muxResult.container)
+              )
+            : finalName
+          const adaptedHls: AdaptedHls = {
+            kind: 'hls',
+            taskId,
+            saveDir: effectiveSaveDir,
+            finalName: hlsFinalName,
+            manifestUrl: admitHttpSource(muxResult.manifestUrl),
+            sanitizedHeaders,
+            container: muxResult.container,
+            sourceMeta: null,
+            receipt: opts.receipt,
+          }
+          const hlsDispatchResult = await deps.dispatchHls(adaptedHls)
+          return {
+            outcome: 'created',
+            gid: hlsDispatchResult.taskId,
+            taskId: hlsDispatchResult.taskId,
+          }
+        }
+        if (muxResult && muxResult.kind !== 'hls') {
           const sanitizedHeaders = muxResult.headers
             ? stripHopByHopHeaders(muxResult.headers)
             : {}

@@ -281,4 +281,37 @@ describe('makeResolveToMux — generalized multi-resolver routing', () => {
       { url: BILI, cookies: 'SESSDATA=x' }
     )
   })
+
+  it('returns an HLS manifest result and drops malformed HLS results', async () => {
+    const LULU = 'https://luluvdo.com/e/abc'
+    const good = {
+      kind: 'hls',
+      manifestUrl: 'https://cdn.example/master.m3u8',
+      headers: { Referer: 'https://lulustream.com/' },
+      title: 'T',
+    }
+    const invokeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ kind: 'hls', manifestUrl: 42 })
+      .mockResolvedValueOnce(good)
+    const pluginHost = {
+      activate: vi.fn().mockResolvedValue(undefined),
+      invokeCommand,
+    } as any
+    const resolve = makeResolveToMux(
+      fakeRegistry(
+        plugin({ id: 'a.bad', hostPermissions: ['*://*.luluvdo.com/*'] }),
+        plugin({ id: 'b.lulu', hostPermissions: ['*://*.luluvdo.com/*'] })
+      ),
+      pluginHost
+    )
+    expect(await resolve(LULU)).toEqual({
+      kind: 'hls',
+      manifestUrl: 'https://cdn.example/master.m3u8',
+      container: 'mp4',
+      headers: { Referer: 'https://lulustream.com/' },
+      title: 'T',
+    })
+    expect(invokeCommand).toHaveBeenCalledTimes(2)
+  })
 })
