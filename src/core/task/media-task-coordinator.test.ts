@@ -899,7 +899,9 @@ describe('MediaTaskCoordinator.start', () => {
       rmSpy.mockRestore()
     }
 
-    expect(decryptorFake.getKey).toHaveBeenCalledWith('https://cdn/key')
+    expect(decryptorFake.getKey).toHaveBeenCalledWith('https://cdn/key', {
+      Referer: 'https://site.com',
+    })
     expect(decryptorFake.decrypt).toHaveBeenCalled()
   })
 

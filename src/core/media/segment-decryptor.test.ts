@@ -54,6 +54,35 @@ describe('SegmentDecryptor', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('sends the job headers with the key request', async () => {
+    const key = new Uint8Array(16).fill(3)
+    const fetch = vi.fn().mockResolvedValue(new Response(key))
+    vi.stubGlobal('fetch', fetch)
+    await expect(
+      new SegmentDecryptor().getKey('https://cdn.test/key', {
+        Referer: 'https://site.test/',
+      })
+    ).resolves.toEqual(key)
+    expect(fetch).toHaveBeenCalledWith(
+      'https://cdn.test/key',
+      expect.objectContaining({ headers: { Referer: 'https://site.test/' } })
+    )
+  })
+
+  it('retries a key whose first request failed', async () => {
+    const key = new Uint8Array(16).fill(5)
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 403 }))
+      .mockResolvedValueOnce(new Response(key))
+    vi.stubGlobal('fetch', fetch)
+    const decryptor = new SegmentDecryptor()
+    await expect(decryptor.getKey('https://cdn.test/key')).rejects.toThrow(
+      'HTTP 403'
+    )
+    await expect(decryptor.getKey('https://cdn.test/key')).resolves.toEqual(key)
+  })
+
   describe('decrypt with known AES-128-CBC vector', () => {
     it('decrypts PKCS7-padded ciphertext to plaintext', () => {
       const plaintext = Buffer.from('Hello, World! 1234')

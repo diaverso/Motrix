@@ -5,16 +5,28 @@ import { cancelResponseBody, fetchSource } from './fetch-source'
 export class SegmentDecryptor {
   private keyCache: Map<string, Promise<Uint8Array>>
 
-  private defaultFetchKey: (uri: string) => Promise<Uint8Array>
+  private defaultFetchKey: (
+    uri: string,
+    headers?: Record<string, string>
+  ) => Promise<Uint8Array>
 
-  constructor(fetchKey?: (uri: string) => Promise<Uint8Array>) {
+  constructor(
+    fetchKey?: (
+      uri: string,
+      headers?: Record<string, string>
+    ) => Promise<Uint8Array>
+  ) {
     this.keyCache = new Map()
 
     if (fetchKey) {
       this.defaultFetchKey = fetchKey
     } else {
-      this.defaultFetchKey = async (uri: string) => {
-        const response = await fetchSource(uri)
+      this.defaultFetchKey = async (
+        uri: string,
+        headers?: Record<string, string>
+      ) => {
+        // Key servers gate on the same Referer/Origin/UA set as the segments.
+        const response = await fetchSource(uri, headers ? { headers } : {})
         if (!response.ok) {
           await cancelResponseBody(response)
           throw new Error(`Key request failed: HTTP ${response.status}`)
@@ -84,7 +96,10 @@ export class SegmentDecryptor {
     }
   }
 
-  async getKey(uri: string): Promise<Uint8Array> {
+  async getKey(
+    uri: string,
+    headers?: Record<string, string>
+  ): Promise<Uint8Array> {
     uri = admitHttpSource(uri)
     // Return cached promise if available (concurrent-safe)
     const cached = this.keyCache.get(uri)
@@ -93,8 +108,14 @@ export class SegmentDecryptor {
     }
 
     // Store the promise immediately to handle concurrent calls
-    const keyPromise = this.defaultFetchKey(uri)
+    const keyPromise = headers
+      ? this.defaultFetchKey(uri, headers)
+      : this.defaultFetchKey(uri)
     this.keyCache.set(uri, keyPromise)
+    // A failed request must not poison the cache for a later retry.
+    keyPromise.catch(() => {
+      if (this.keyCache.get(uri) === keyPromise) this.keyCache.delete(uri)
+    })
 
     return keyPromise
   }

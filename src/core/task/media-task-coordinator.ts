@@ -674,10 +674,20 @@ export class MediaTaskCoordinator {
       ) {
         await changePhase('decrypting')
       }
-      await decryptPlan(job.video, videoResult, this.deps.decryptor)
+      await decryptPlan(
+        job.video,
+        videoResult,
+        this.deps.decryptor,
+        job.headers
+      )
       assertActive()
       if (job.audio && audioResult) {
-        await decryptPlan(job.audio, audioResult, this.deps.decryptor)
+        await decryptPlan(
+          job.audio,
+          audioResult,
+          this.deps.decryptor,
+          job.headers
+        )
         assertActive()
       }
 
@@ -1236,11 +1246,12 @@ function mapError(err: Error): string {
 async function decryptPlan(
   plan: SegmentPlan,
   result: { initPath?: string; partPaths: string[] },
-  decryptor: SegmentDecryptor
+  decryptor: SegmentDecryptor,
+  headers?: Record<string, string>
 ): Promise<void> {
   // Decrypt init segment if it has a key
   if (plan.init?.key && result.initPath) {
-    const key = await decryptor.getKey(plan.init.key.uri)
+    const key = await decryptor.getKey(plan.init.key.uri, headers)
     const ct = await fs.promises.readFile(result.initPath)
     const pt = decryptor.decrypt(new Uint8Array(ct), key, plan.init.key.iv)
     await fs.promises.writeFile(result.initPath, pt)
@@ -1260,7 +1271,7 @@ async function decryptPlan(
         .map(async (seg, offset) => {
           const partPath = result.partPaths[i + offset]
           if (!seg.key || !partPath) return
-          const key = await decryptor.getKey(seg.key.uri)
+          const key = await decryptor.getKey(seg.key.uri, headers)
           const ct = await fs.promises.readFile(partPath)
           const pt = decryptor.decrypt(new Uint8Array(ct), key, seg.key.iv)
           await fs.promises.writeFile(partPath, pt)
