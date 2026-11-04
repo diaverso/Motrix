@@ -683,6 +683,8 @@ async function handleCreateTaskUnderAdmission(
     | undefined
   let pluginMetadataOps: readonly StagedMetadataOp[] = []
   let assertPluginPolicyCurrent: (() => void) | undefined
+  /** A resolve hook's filename (fs.task.write-gated in ctx.update). */
+  let pluginFilename: string | null = null
   let dispatchEngine: (reservedGid: string) => Promise<string>
   let directReplay: DirectReplayRecipe | null = null
   let canonicalUris = deriveUris(req)
@@ -949,6 +951,9 @@ async function handleCreateTaskUnderAdmission(
         'http',
         'https',
       ]).map((source) => source.requestUrl)
+      if (result.contributors.filename && result.final.filename) {
+        pluginFilename = sanitizeRemoteFilename(result.final.filename)
+      }
       if (result.final.headers.length > 0) {
         params.headers = Object.fromEntries(
           result.final.headers.map((h) => [h.name, h.value])
@@ -1002,8 +1007,12 @@ async function handleCreateTaskUnderAdmission(
     // The hook may replace the source URI. Rebase the non-explicit fallback
     // name onto that final URI before probing, so a failed/empty metadata
     // response cannot resurrect the original request's basename.
+    // A plugin-chosen name outranks both: the hook knows the human title a
+    // signed CDN path (e.g. .../video.mp4?md5=...) cannot carry.
     if (!req.filename?.trim()) {
-      await pickHttpName(uriBasename(params.uris[0]) ?? 'download')
+      await pickHttpName(
+        pluginFilename ?? uriBasename(params.uris[0]) ?? 'download'
+      )
     }
 
     assertPluginPolicyCurrent?.()
@@ -1013,6 +1022,7 @@ async function handleCreateTaskUnderAdmission(
     // Manual names remain authoritative and skip filename discovery.
     if (
       !req.filename?.trim() &&
+      pluginFilename === null &&
       params.uris.length === 1 &&
       metadataRequestProfile !== null &&
       deps.directResourceValidator?.probe

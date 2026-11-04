@@ -2436,9 +2436,11 @@ describe('handleCreateTask plugin-hook chain (Plan C / T15)', () => {
       uris?: string[]
       headers?: Array<{ name: string; value: string }>
       proxy?: string
+      filename?: string
       headerContributors?: string[]
       uriContributor?: string
       proxyContributor?: string
+      filenameContributor?: string
       staged?: ReturnType<typeof makeStaged>
     } = {}
   ) {
@@ -2449,7 +2451,7 @@ describe('handleCreateTask plugin-hook chain (Plan C / T15)', () => {
         sourceUrl: overrides.uris?.[0] ?? 'https://a/b',
         uris: overrides.uris ?? ['https://a/b'],
         saveDir: '/d',
-        filename: 'b',
+        filename: overrides.filename ?? 'b',
         connections: undefined,
         headers: overrides.headers ?? [],
         proxy: overrides.proxy,
@@ -2460,6 +2462,9 @@ describe('handleCreateTask plugin-hook chain (Plan C / T15)', () => {
         headers: overrides.headerContributors ?? [],
         proxy: overrides.proxyContributor,
         uris: overrides.uriContributor,
+        ...(overrides.filenameContributor
+          ? { filename: overrides.filenameContributor }
+          : {}),
       },
       staged,
     }
@@ -2518,6 +2523,67 @@ describe('handleCreateTask plugin-hook chain (Plan C / T15)', () => {
     expect(deps.addUri.mock.calls[0]?.[0]).toEqual([
       'https://cdn.example/api/file.bin',
     ])
+  })
+
+  it("uses a resolve hook's filename over the signed URI basename and skips the probe", async () => {
+    const orchestrator = makeOrchestrator(
+      makeChainCommit({
+        uris: ['https://cdn.example/enc/video.mp4?md5=x&expires=1'],
+        uriContributor: 'diaverso.firestream',
+        filename: 'La bola negra 1080.mp4',
+        filenameContributor: 'diaverso.firestream',
+      })
+    )
+    const probe = vi.fn()
+    const deps = makeDeps()
+
+    await handleCreateTask(
+      {
+        type: 'http',
+        uris: ['https://firestream.site/v/Ef-SZed9'],
+        saveDir: '/d',
+        headers: [],
+      },
+      {
+        ...deps,
+        orchestrator,
+        directResourceValidator: { capture: vi.fn(), probe },
+      }
+    )
+
+    expect(probe).not.toHaveBeenCalled()
+    expect(deps.pick).toHaveBeenLastCalledWith('/d', 'La bola negra 1080.mp4')
+    expect(deps.addUri).toHaveBeenCalledWith(
+      ['https://cdn.example/enc/video.mp4?md5=x&expires=1'],
+      expect.objectContaining({ out: 'La bola negra 1080.mp4.motrix' })
+    )
+  })
+
+  it("keeps the user's explicit filename over a hook's filename", async () => {
+    const orchestrator = makeOrchestrator(
+      makeChainCommit({
+        uris: ['https://cdn.example/enc/video.mp4'],
+        filename: 'Plugin Name.mp4',
+        filenameContributor: 'diaverso.firestream',
+      })
+    )
+    const deps = makeDeps()
+
+    await handleCreateTask(
+      {
+        type: 'http',
+        uris: ['https://firestream.site/v/Ef-SZed9'],
+        saveDir: '/d',
+        filename: 'mine.mp4',
+        headers: [],
+      },
+      { ...deps, orchestrator }
+    )
+
+    expect(deps.addUri).toHaveBeenCalledWith(
+      ['https://cdn.example/enc/video.mp4'],
+      expect.objectContaining({ out: 'mine.mp4.motrix' })
+    )
   })
 
   it('keeps the rewritten URI basename when its metadata probe fails', async () => {

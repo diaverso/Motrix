@@ -17,6 +17,8 @@ export interface MergedHttp {
     headers: string[]
     proxy?: string
     uris?: string
+    /** Last plugin whose patch set `filename`. */
+    filename?: string
   }
 }
 
@@ -47,13 +49,17 @@ export function mergeChain(
   let proxy = userInput.proxy
   let lastUrisFrom: string | undefined
   let proxyContributor: string | undefined
+  let filenameContributor: string | undefined
 
   for (const e of sorted) {
     if (e.patch.uris) {
       uris = e.patch.uris
       lastUrisFrom = e.pluginId
     }
-    if (e.patch.filename) filename = e.patch.filename
+    if (e.patch.filename) {
+      filename = e.patch.filename
+      filenameContributor = e.pluginId
+    }
     if (e.patch.connections) connections = e.patch.connections
 
     if (e.patch.headers) {
@@ -88,6 +94,7 @@ export function mergeChain(
       headers: headerContributors,
       proxy: proxyContributor,
       uris: lastUrisFrom,
+      ...(filenameContributor ? { filename: filenameContributor } : {}),
     },
   }
 }
